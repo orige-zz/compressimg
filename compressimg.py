@@ -4,6 +4,7 @@ import argparse
 import os
 import time
 from shutil import copytree
+from multiprocessing import Pool
 
 import tinify
 
@@ -17,62 +18,67 @@ def log(message):
     print(message)
 
 
-def compressimg(directory):
-    for entry in os.scandir(directory):
+def convert(image_file):
+    done = False
+    message = ''
 
+    try:
+        log('Compressing {} ...'.format(image_file))
+        source_file = tinify.from_file(image_file)
+        source_file.to_file(image_file)
+
+    except tinify.AccountError:
+        message = 'ERROR: Verify your API key and your account limit.'
+
+    except tinify.ClientError:
+        message = 'ERROR: Problem with your request options or your image.'
+
+    except tinify.ServerError:
+        message = 'ERROR: Temporary issue on Tinify API.'
+
+    except tinify.ConnectionError:
+        message = 'ERROR: Network connection problem.'
+
+    except Exception:
+        message = 'ERROR: Something goes wrong and I do not know why.'
+    else:
+        done = True
+
+    return done, message
+
+
+def get_convertible_files(directory):
+    convertible_files = []
+    for entry in os.scandir(directory):
         if entry.is_dir():
-            compressimg(entry.path)
+            get_convertible_files(entry.path)
 
         _, extension = os.path.splitext(entry.path)
         if extension.lower() not in VALID_EXTENSIONS:
             continue
 
-        done = False
-        time_to_retry = 10  # seconds
-        retries = 10
+        convertible_files.append(entry.path)
 
-        while retries:
-            try:
-                log('Compressing {} ...'.format(entry.path))
-                source_file = tinify.from_file(entry.path)
-                source_file.to_file(entry.path)
-                done = True
-                break
+    return convertible_files
 
-            except tinify.AccountError:
-                message = (
-                    'ERROR: Verify your API key and your account limit. '
-                    'Trying again in {} seconds'
-                ).format(time_to_retry)
 
-            except tinify.ClientError:
-                message = (
-                    'ERROR: Problem with your request options or your image. '
-                    'Trying again in {} seconds'
-                ).format(time_to_retry)
+def convert_files(image_file):
+    done = False
+    time_to_retry = 10  # seconds
+    retries = 10
 
-            except tinify.ServerError:
-                message = (
-                    'ERROR: Temporary issue on Tinify API. '
-                    'Trying again in {} seconds'
-                ).format(time_to_retry)
+    while retries:
+        done, message = convert(image_file)
+        if done:
+            break
 
-            except tinify.ConnectionError:
-                message = 'ERROR: Network connection problem. Trying again in {} seconds'.format(
-                    time_to_retry
-                )
-            except Exception:
-                message = (
-                    'ERROR: Something goes wrong and I do not know why. '
-                    'Trying again in $time_to_retry seconds'
-                ).format(time_to_retry)
+        message += ' Time to retry: {}'.format(time_to_retry)
+        log(message)
+        retries -= 1
+        time.sleep(time_to_retry)
 
-            log(message)
-            retries -= 1
-            time.sleep(time_to_retry)
-
-        if not done:
-            log(' SKIPPED!')
+    if not done:
+        log(' SKIPPED!')
 
 
 def valid_directory(directory):
@@ -111,4 +117,6 @@ if __name__ == '__main__':
 
     directory = valid_directory(args.directory)
     backup_files(directory, args.backup_dir)
-    compressimg(directory)
+
+    pool = Pool(processes=4)
+    pool.map(convert_files, get_convertible_files(directory))
