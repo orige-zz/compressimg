@@ -1,0 +1,8 @@
+# Vim backup files
+*~
+
+# Mac stuff
+.DS_Store
+
+# Env
+env/
